@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 
 # 1. Konfigurasi Halaman Dashboard Profesional
-st.set_page_config(page_title="Dashboard Profesional Audit Genset", layout="wide")
+st.set_page_config(page_title="Dashboard Analisis RH & BBM Genset", layout="wide")
 st.title("📊 Dashboard Eksekutif: Audit Delta RH & Kewajaran BBM Genset")
 st.markdown("---")
 
@@ -13,11 +13,9 @@ def load_data_from_link():
     sheet_id = "1CrupWIBU3NP49ORN3AxC6ave7SD01ds_odu7NVBOIoI"
     sheet_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid=0"
     
-    # Ambil struktur kolom pertama kali
     df_header = pd.read_csv(sheet_url, nrows=1)
     semua_kolom = df_header.columns.tolist()
     
-    # Kolom krusial yang kita butuhkan dari spreadsheet Anda
     kolom_target = [
         'Ticket Number SWFM', 'Type Ticket', 'Severity', 'Site Id', 'Site Name', 
         'Regional', 'Cluster TO', 'Site Class', 'RH Start Time', 'RH Stop Time', 
@@ -49,10 +47,8 @@ try:
     with st.spinner('Sedang menarik data dari Google Sheets... Mohon tunggu.'):
         df = load_data_from_link()
 
-    # 3. TYPE FILTER PROFESIONAL (Menggunakan Grid Atas, Bukan Sidebar Samping)
+    # 3. TYPE FILTER PROFESIONAL (Grid Atas)
     st.markdown("### 🔍 Panel Filter Data")
-    
-    # Membuat susunan 4 kolom sejajar untuk dropdown filter
     f_col1, f_col2, f_col3, f_col4 = st.columns(4)
     
     with f_col1:
@@ -93,8 +89,6 @@ try:
     total_delta_rh = df_filtered['Delta RH'].sum()
     total_liter = df_filtered['Jumlah Liter'].sum()
     total_records = len(df_filtered)
-    
-    # Hitung rata-rata rasio konsumsi bbm global terfilter
     rasio_global = (total_liter / total_delta_rh) if total_delta_rh > 0 else 0.0
 
     col1, col2, col3, col4 = st.columns(4)
@@ -109,7 +103,7 @@ try:
 
     st.markdown("---")
 
-    # 5. VISUALISASI GRAFIK UTAMA
+    # 5. VISUALISASI GRAFIK
     if not df_filtered.empty:
         col_graph1, col_graph2 = st.columns(2)
         
@@ -156,31 +150,29 @@ try:
 
     st.markdown("---")
 
-    # 7. FITUR BARU: ANALISA PERBANDINGAN KEWAJARAN KONSUMSI BBM (AUDIT REPORT)
+    # 7. FITUR: ANALISA PERBANDINGAN KEWAJARAN KONSUMSI BBM (REVISI PERMINTAAN KETERANGAN)
     st.subheader("🔍 Analisa Audit: Perbandingan & Kewajaran Konsumsi BBM")
     st.markdown("Bagian ini otomatis mendeteksi tiket atau lokasi site yang memiliki pelaporan bensin tidak rasional / boros.")
 
     if not df_filtered.empty:
-        # Duplikat data untuk kebutuhan audit
         df_audit = df_filtered.copy()
         
         # Hitung Rasio Konsumsi per baris tiket
         df_audit['Rasio (Ltr/Jam)'] = (df_audit['Jumlah Liter'] / df_audit['Delta RH']).round(2)
-        # Tangani jika pembagian dengan nol (Delta RH = 0)
         df_audit.loc[df_audit['Delta RH'] == 0, 'Rasio (Ltr/Jam)'] = 0.0
         
-        # Fungsi logika penentuan status kewajaran secara profesional
+        # Fungsi Logika Status dengan Aturan Baru "Tidak Ada Backup Time"
         def tentukan_kewajaran(row):
             rh = row['Delta RH']
             liter = row['Jumlah Liter']
             rasio = row['Rasio (Ltr/Jam)']
             
-            if rh == 0 and liter > 0:
+            if rh == 0 and liter == 0:
+                return "🟢 Tidak Ada Backup Time"
+            elif rh == 0 and liter > 0:
                 return "❌ Tidak Wajar (BBM Terisi, Mesin Mati)"
             elif rh > 0 and liter == 0:
                 return "⚠️ Atensi (Genset Jalan, BBM 0 Liter)"
-            elif rh == 0 and liter == 0:
-                return "🟢 Wajar (Tidak Ada Aktivitas)"
             elif rasio > 4.5:
                 return "🚨 Indikasi Boros / Over-consumption"
             elif rasio < 1.0:
@@ -190,20 +182,19 @@ try:
 
         df_audit['Status Audit BBM'] = df_audit.apply(tentukan_kewajaran, axis=1)
         
-        # Tampilkan Ringkasan Status Audit dalam bentuk angka total
+        # Tampilkan matriks total kasus audit
         status_counts = df_audit['Status Audit BBM'].value_counts()
         
         c_aud1, c_aud2, c_aud3 = st.columns(3)
         with c_aud1:
-            st.info(f"📊 Total Kasus Wajar: {status_counts.get('🟢 Wajar', 0) + status_counts.get('🟢 Wajar (Tidak Ada Aktivitas)', 0)} Tiket")
+            st.info(f"📊 Total Kasus Normal/Wajar: {status_counts.get('🟢 Wajar', 0)} Tiket")
         with c_aud2:
-            st.error(f"🚨 Total Kasus Indikasi Boros: {status_counts.get('🚨 Indikasi Boros / Over-consumption', 0)} Tiket")
+            st.success(f"💤 Total Tidak Ada Backup Time: {status_counts.get('🟢 Tidak Ada Backup Time', 0)} Tiket")
         with c_aud3:
-            st.warning(f"❌ Total Kasus Tidak Sinkron: {status_counts.get('❌ Tidak Wajar (BBM Terisi, Mesin Mati)', 0) + status_counts.get('⚠️ Atensi (Genset Jalan, BBM 0 Liter)', 0)} Tiket")
+            st.error(f"🚨 Total Kasus Bermasalah/Boros: {status_counts.get('🚨 Indikasi Boros / Over-consumption', 0) + status_counts.get('❌ Tidak Wajar (BBM Terisi, Mesin Mati)', 0)} Tiket")
         
         st.markdown("#### Tabel Pemantauan Khusus (Urutan Kasus Paling Tidak Wajar / Boros)")
         
-        # Tampilkan kolom audit khusus, urutkan dari rasio yang paling bengkak/boros
         kolom_audit_tampil = [
             'Ticket Number SWFM', 'Site Id', 'Site Name', 'NOP', 'PIC Take Over Ticket',
             'Delta RH', 'Jumlah Liter', 'Rasio (Ltr/Jam)', 'Status Audit BBM'
