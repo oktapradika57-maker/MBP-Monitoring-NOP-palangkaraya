@@ -3,12 +3,12 @@ import pandas as pd
 import plotly.express as px
 
 # 1. Konfigurasi Halaman Dashboard
-st.set_page_config(page_title="Dashboard Analisis RH Genset", layout="wide")
-st.title("📊 Dashboard Analisis & Komparasi Jam Backup Genset (Live Data)")
+st.set_page_config(page_title="Dashboard Delta RH & Liter Genset", layout="wide")
+st.title("📊 Dashboard Analisis Delta RH & Konsumsi Liter BBM Genset")
 st.markdown("---")
 
 # 2. Memuat Data Menggunakan Metode CSV Cerdas
-@st.cache_data(ttl=300)  # Refresh otomatis setiap 5 menit jika halaman direload
+@st.cache_data(ttl=300)
 def load_data_from_link():
     sheet_id = "1CrupWIBU3NP49ORN3AxC6ave7SD01ds_odu7NVBOIoI"
     sheet_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid=0"
@@ -21,7 +21,7 @@ def load_data_from_link():
     kolom_target = [
         'Ticket Number SWFM', 'Type Ticket', 'Severity', 'Site Id', 'Site Name', 
         'Regional', 'Cluster TO', 'Site Class', 'RH Start Time', 'RH Stop Time', 
-        'RH Awal', 'RH Akhir', 'Delta RH', 'Jumlah Liter'
+        'RH Awal', 'RH Akhir', 'Delta RH', 'Jumlah Liter', 'NOP', 'Month', 'PIC Take Over Ticket'
     ]
     
     # Validasi kolom yang benar-benar ada di Google Sheets Anda
@@ -31,130 +31,135 @@ def load_data_from_link():
     df = pd.read_csv(sheet_url, usecols=kolom_aman)
     
     # --- MEMBERSIHKAN & PROSES DATA ---
-    # Konversi kolom teks Id/Name menjadi string bersih agar filter dropdown lancar
-    for col in ['Site Id', 'Site Name', 'Ticket Number SWFM', 'Regional', 'Type Ticket']:
+    # Konversi kolom teks utama menjadi string bersih agar filter lancar
+    kolom_teks = ['Site Id', 'Site Name', 'Ticket Number SWFM', 'Regional', 'Type Ticket', 'NOP', 'Month', 'PIC Take Over Ticket']
+    for col in kolom_teks:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip()
             
-    # Pastikan format data waktu aman
-    if 'RH Start Time' in df.columns and 'RH Stop Time' in df.columns:
-        df['RH Start Time'] = pd.to_datetime(df['RH Start Time'], errors='coerce')
-        df['RH Stop Time'] = pd.to_datetime(df['RH Stop Time'], errors='coerce')
-        # Hitung durasi aktual log (dalam jam)
-        df['Durasi Aktual Waktu (Jam)'] = ((df['RH Stop Time'] - df['RH Start Time']).dt.total_seconds() / 3600).round(2)
-    else:
-        df['Durasi Aktual Waktu (Jam)'] = 0.0
-
-    # Menggunakan 'Delta RH' asli dari spreadsheet Anda (Kolom BX)
+    # Pastikan format angka untuk Delta RH dan Jumlah Liter aman
     if 'Delta RH' in df.columns:
-        df['Delta RH'] = pd.to_numeric(df['Delta RH'], errors='coerce').fillna(0.0).round(2)
+        df['Delta RH'] = pd.to_numeric(df['Delta RH'], errors='coerce').fillna(0.0)
     else:
-        # Fallback jika kolom bermasalah
-        if 'RH Awal' in df.columns and 'RH Akhir' in df.columns:
-            df['RH Awal'] = pd.to_numeric(df['RH Awal'], errors='coerce').fillna(0.0)
-            df['RH Akhir'] = pd.to_numeric(df['RH Akhir'], errors='coerce').fillna(0.0)
-            df['Delta RH'] = (df['RH Akhir'] - df['RH Awal']).round(2)
-        else:
-            df['Delta RH'] = 0.0
-            
-    # Selisih/Deviasi: Jam Mesin Asli (Delta RH) dikurangi Jam Waktu Log
-    df['Selisih Deviasi (Jam)'] = (df['Delta RH'] - df['Durasi Aktual Waktu (Jam)']).round(2)
-    
+        df['Delta RH'] = 0.0
+
+    if 'Jumlah Liter' in df.columns:
+        df['Jumlah Liter'] = pd.to_numeric(df['Jumlah Liter'], errors='coerce').fillna(0.0)
+    else:
+        df['Jumlah Liter'] = 0.0
+        
     return df
 
 try:
     with st.spinner('Sedang menarik data dari Google Sheets... Mohon tunggu.'):
         df = load_data_from_link()
 
-    # 3. FITUR FILTER BARU (Menggunakan Dropdown Site Id murni)
+    # 3. FITUR FILTER SIDEBAR PERMINTAAN BARU
     st.sidebar.header("Filter Navigasi")
     
-    # Ambil list semua Site Id unik yang valid (bukan teks 'nan')
-    site_id_options = sorted([s for s in df["Site Id"].unique() if s != 'nan' and pd.notna(s)])
-    
-    # Dropdown Multi-select khusus Site Id (Default: memunculkan 3 site pertama agar grafik rapi)
-    selected_site_id = st.sidebar.multiselect(
-        "Pilih Site Id:", 
-        options=site_id_options, 
-        default=site_id_options[:3] if len(site_id_options) > 0 else None
-    )
-    
-    # Terapkan filter ke dataframe utama
-    if selected_site_id:
-        df_filtered = df[df["Site Id"].isin(selected_site_id)]
+    # Filter 1: NOP
+    if 'NOP' in df.columns:
+        nop_options = sorted([n for n in df["NOP"].unique() if n != 'nan' and pd.notna(n)])
+        selected_nop = st.sidebar.multiselect("Pilih NOP:", options=nop_options, default=nop_options[:2] if nop_options else None)
+        if selected_nop:
+            df = df[df["NOP"].isin(selected_nop)]
+
+    # Filter 2: Month (Bulan)
+    if 'Month' in df.columns:
+        month_options = sorted([m for m in df["Month"].unique() if m != 'nan' and pd.notna(m)])
+        selected_month = st.sidebar.multiselect("Pilih Bulan (Month):", options=month_options, default=month_options if month_options else None)
+        if selected_month:
+            df = df[df["Month"].isin(selected_month)]
+
+    # Filter 3: PIC Take Over Ticket
+    if 'PIC Take Over Ticket' in df.columns:
+        pic_options = sorted([p for p in df["PIC Take Over Ticket"].unique() if p != 'nan' and pd.notna(p)])
+        selected_pic = st.sidebar.multiselect("Pilih PIC Take Over:", options=pic_options)
+        if selected_pic:
+            df = df[df["PIC Take Over Ticket"].isin(selected_pic)]
+
+    # Filter 4: Dropdown Site Id
+    if 'Site Id' in df.columns:
+        site_id_options = sorted([s for s in df["Site Id"].unique() if s != 'nan' and pd.notna(s)])
+        selected_site_id = st.sidebar.multiselect("Pilih Site Id:", options=site_id_options, default=site_id_options[:5] if site_id_options else None)
+        if selected_site_id:
+            df_filtered = df[df["Site Id"].isin(selected_site_id)]
+        else:
+            df_filtered = df
     else:
         df_filtered = df
 
     # 4. RINGKASAN UTAMA (KPI Cards)
-    total_jam_waktu = df_filtered['Durasi Aktual Waktu (Jam)'].sum()
     total_delta_rh = df_filtered['Delta RH'].sum()
-    total_deviasi = df_filtered['Selisih Deviasi (Jam)'].sum()
+    total_liter = df_filtered['Jumlah Liter'].sum()
+    total_records = len(df_filtered)
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Total Durasi Waktu Log (Kalender)", f"{total_jam_waktu:,.2f} Jam")
+        st.metric("Total Data Terfilter", f"{total_records:,} Tiket")
     with col2:
-        st.metric("Total Delta RH Asli (Jam Mesin)", f"{total_delta_rh:,.2f} Jam")
+        st.metric("Total Delta RH (Jam Mesin)", f"{total_delta_rh:,.2f} Jam")
     with col3:
-        st.metric("Total Selisih Deviasi", f"{total_deviasi:,.2f} Jam", delta=f"{total_deviasi:.2f} Jam", delta_color="inverse")
+        st.metric("Total Konsumsi BBM (Jumlah Liter)", f"{total_liter:,.2f} Liter")
 
     st.markdown("---")
 
-    # 5. PERBAIKAN GRAFIK (Lebih bersih dan dikelompokkan per Site Id/Tiket)
-    st.subheader("📌 Grafik Komparasi: Durasi Aktual Waktu vs Delta RH")
-    
+    # 5. VISUALISASI GRAFIK BARU
     if not df_filtered.empty:
-        # Supaya grafik tidak menumpuk berantakan, kita batasi maksimal 40 tiket teratas yang tampil di chart
-        df_chart_sample = df_filtered.head(40)
+        col_graph1, col_graph2 = st.columns(2)
         
-        # Mengubah struktur data agar bisa dibaca barmode 'group' dengan benar
-        chart_df = df_chart_sample.reset_index().melt(
-            id_vars=['Ticket Number SWFM', 'Site Id', 'Site Name'], 
-            value_vars=['Durasi Aktual Waktu (Jam)', 'Delta RH'],
-            var_name='Metode Hitung', value_name='Total Jam'
-        )
-        
-        # Membuat grafik batang berdampingan yang presisi
-        fig_compare = px.bar(
-            chart_df, 
-            x='Ticket Number SWFM', 
-            y='Total Jam', 
-            color='Metode Hitung', 
-            barmode='group',
-            text_auto='.1f', # Munculkan angka jam di atas batang grafik agar mudah dibaca
-            title=f"Perbandingan Backup per Tiket untuk Site Terpilih (Maks. 40 Tiket Utama)",
-            labels={'Ticket Number SWFM': 'Nomor Tiket SWFM', 'Total Jam': 'Durasi (Jam)'},
-            color_discrete_map={'Durasi Aktual Waktu (Jam)': '#3498db', 'Delta RH': '#e67e22'} # Warna biru vs orange kontras
-        )
-        fig_compare.update_layout(xaxis_tickangle=-45, legend_title_text='Kategori')
-        st.plotly_chart(fig_compare, use_container_width=True)
+        with col_graph1:
+            st.subheader("📌 Total Delta RH per Site Id")
+            # Mengelompokkan total Delta RH berdasarkan Site Id
+            rh_per_site = df_filtered.groupby('Site Id')['Delta RH'].sum().reset_index()
+            rh_per_site = rh_per_site.sort_values(by='Delta RH', ascending=False).head(30) # Ambil top 30 agar rapi
+            
+            fig_rh = px.bar(
+                rh_per_site,
+                x='Site Id',
+                y='Delta RH',
+                text_auto='.1f',
+                title="Total Akumulasi Delta RH Berdasarkan Site Id (Top 30)",
+                color_discrete_sequence=['#e67e22'] # Warna oranye khas mesin
+            )
+            fig_rh.update_layout(xaxis_tickangle=-45)
+            st.plotly_chart(fig_rh, use_container_width=True)
+            
+        with col_graph2:
+            st.subheader("📌 Total Jumlah Liter per Site Id")
+            # Mengelompokkan total Jumlah Liter berdasarkan Site Id
+            liter_per_site = df_filtered.groupby('Site Id')['Jumlah Liter'].sum().reset_index()
+            liter_per_site = liter_per_site.sort_values(by='Jumlah Liter', ascending=False).head(30) # Ambil top 30
+            
+            fig_liter = px.bar(
+                liter_per_site,
+                x='Site Id',
+                y='Jumlah Liter',
+                text_auto='.0f',
+                title="Total Konsumsi BBM (Jumlah Liter) Berdasarkan Site Id (Top 30)",
+                color_discrete_sequence=['#2cc3c3'] # Warna cyan/hijau bensin
+            )
+            fig_liter.update_layout(xaxis_tickangle=-45)
+            st.plotly_chart(fig_liter, use_container_width=True)
+            
     else:
-        st.warning("Tidak ada data untuk Site Id yang dipilih.")
+        st.warning("Tidak ada data yang cocok dengan kombinasi filter Anda saat ini.")
 
     st.markdown("---")
 
-    # 6. PERBAIKAN TABEL DETAIL (Konversi paksa ke string/format aman agar 100% bisa dibuka)
-    st.subheader("📋 Tabel Detail Analisis Data dan Validasi Lapangan")
+    # 6. TABEL DETAIL AMAN (Anti-Crash saat dibuka)
+    st.subheader("📋 Tabel Detail Analisis Lapangan (Filtered)")
     
-    # Kolom final yang disajikan di monitor
-    kolom_tampilan_akhir = [
-        'Ticket Number SWFM', 'Site Id', 'Site Name', 'Regional', 'Cluster TO', 'Site Class',
-        'RH Start Time', 'RH Stop Time', 'Durasi Aktual Waktu (Jam)',
-        'RH Awal', 'RH Akhir', 'Delta RH', 'Selisih Deviasi (Jam)'
+    # Tentukan urutan kolom tampilan di tabel
+    kolom_tampilan = [
+        'Ticket Number SWFM', 'NOP', 'Month', 'PIC Take Over Ticket', 'Site Id', 'Site Name', 
+        'Regional', 'Cluster TO', 'Site Class', 'RH Awal', 'RH Akhir', 'Delta RH', 'Jumlah Liter'
     ]
-    if 'Jumlah Liter' in df_filtered.columns:
-        kolom_tampilan_akhir.append('Jumlah Liter')
-        
-    kolom_tersedia = [c for c in kolom_tampilan_akhir if c in df_filtered.columns]
+    kolom_tersedia = [c for c in kolom_tampilan if c in df_filtered.columns]
     
-    # Pembersihan final sebelum masuk st.dataframe (Mengubah objek waktu / kosong agar tidak crash saat dibuka)
     df_tabel_tampil = df_filtered[kolom_tersedia].copy()
-    if 'RH Start Time' in df_tabel_tampil.columns:
-        df_tabel_tampil['RH Start Time'] = df_tabel_tampil['RH Start Time'].dt.strftime('%Y-%m-%d %H:%M').fillna('-')
-    if 'RH Stop Time' in df_tabel_tampil.columns:
-        df_tabel_tampil['RH Stop Time'] = df_tabel_tampil['RH Stop Time'].dt.strftime('%Y-%m-%d %H:%M').fillna('-')
     
-    # Menampilkan tabel aman tanpa takut error loading data lagi
+    # Merender tabel Streamlit dengan performa maksimal
     st.dataframe(df_tabel_tampil, use_container_width=True)
 
 except Exception as e:
