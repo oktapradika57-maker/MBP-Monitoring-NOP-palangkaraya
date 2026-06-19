@@ -85,9 +85,35 @@ try:
 
     st.markdown("---")
 
+    # --- SINKRONISASI LOGIKA AUDIT SEBELUM RINGKASAN & GRAFIK ---
+    if not df_filtered.empty:
+        df_filtered = df_filtered.copy()
+        df_filtered['Rasio (Ltr/Jam)'] = (df_filtered['Jumlah Liter'] / df_filtered['Delta RH']).round(2)
+        df_filtered.loc[df_filtered['Delta RH'] == 0, 'Rasio (Ltr/Jam)'] = 0.0
+        
+        def tentukan_kewajaran(row):
+            rh = row['Delta RH']
+            liter = row['Jumlah Liter']
+            rasio = row['Rasio (Ltr/Jam)']
+            
+            if rh == 0 and liter == 0:
+                return "🟢 Tidak Ada Backup Time"
+            elif rh == 0 and liter > 0:
+                return "❌ Tidak Wajar (BBM Terisi, Mesin Mati)"
+            elif rh > 0 and liter == 0:
+                return "⚠️ Atensi (Genset Jalan, BBM 0 Liter)"
+            elif rasio > 4.5:
+                return "🚨 Indikasi Boros / Over-consumption"
+            elif rasio < 1.0:
+                return "📉 Terlalu Irit / Potensi Salah Input"
+            else:
+                return "🟢 Wajar"
+
+        df_filtered['Status Audit BBM'] = df_filtered.apply(tentukan_kewajaran, axis=1)
+
     # 4. RINGKASAN UTAMA (KPI Cards)
-    total_delta_rh = df_filtered['Delta RH'].sum()
-    total_liter = df_filtered['Jumlah Liter'].sum()
+    total_delta_rh = df_filtered['Delta RH'].sum() if not df_filtered.empty else 0
+    total_liter = df_filtered['Jumlah Liter'].sum() if not df_filtered.empty else 0
     total_records = len(df_filtered)
     rasio_global = (total_liter / total_delta_rh) if total_delta_rh > 0 else 0.0
 
@@ -105,6 +131,7 @@ try:
 
     # 5. VISUALISASI GRAFIK
     if not df_filtered.empty:
+        # BARIS GRAFIK PERTAMA: Delta RH & Jumlah Liter per Site Id
         col_graph1, col_graph2 = st.columns(2)
         
         with col_graph1:
@@ -133,6 +160,38 @@ try:
             fig_liter.update_layout(xaxis_tickangle=-45)
             st.plotly_chart(fig_liter, use_container_width=True)
             
+        st.markdown("---")
+        
+        # BARIS GRAFIK KEDUA: GRAFIK BARU TOTAL STATUS AUDIT BBM
+        st.subheader("📌 Distribusi Proporsi Status Audit BBM")
+        
+        # Kelompokkan jumlah tiket per status audit
+        audit_summary = df_filtered['Status Audit BBM'].value_counts().reset_index()
+        audit_summary.columns = ['Status Audit BBM', 'Jumlah Tiket']
+        
+        # Peta warna statis agar tampilan grafik profesional dan seragam
+        warna_status_map = {
+            "🟢 Wajar": "#2ecc71",
+            "🟢 Tidak Ada Backup Time": "#95a5a6",
+            "🚨 Indikasi Boros / Over-consumption": "#e74c3c",
+            "❌ Tidak Wajar (BBM Terisi, Mesin Mati)": "#c0392b",
+            "⚠️ Atensi (Genset Jalan, BBM 0 Liter)": "#f1c40f",
+            "📉 Terlalu Irit / Potensi Salah Input": "#34495e"
+        }
+        
+        fig_audit_pie = px.pie(
+            audit_summary, 
+            values='Jumlah Tiket', 
+            names='Status Audit BBM',
+            hole=0.4, # Membuat donut chart agar lebih modern
+            title="Persentase dan Total Tiket Berdasarkan Hasil Evaluasi Validasi BBM",
+            color='Status Audit BBM',
+            color_discrete_map=warna_status_map
+        )
+        # Menampilkan teks label persentase dan total jumlah tiket langsung pada diagram lingkaran
+        fig_audit_pie.update_traces(textinfo='percent+value', textposition='inside')
+        st.plotly_chart(fig_audit_pie, use_container_width=True)
+            
     else:
         st.warning("Tidak ada data yang cocok dengan kombinasi filter Anda saat ini.")
 
@@ -155,35 +214,8 @@ try:
     st.markdown("Bagian ini otomatis mendeteksi tiket atau lokasi site yang memiliki pelaporan bensin tidak rasional / boros.")
 
     if not df_filtered.empty:
-        df_audit = df_filtered.copy()
-        
-        # Hitung Rasio Konsumsi per baris tiket
-        df_audit['Rasio (Ltr/Jam)'] = (df_audit['Jumlah Liter'] / df_audit['Delta RH']).round(2)
-        df_audit.loc[df_audit['Delta RH'] == 0, 'Rasio (Ltr/Jam)'] = 0.0
-        
-        # Fungsi Logika Status dengan Aturan Baru "Tidak Ada Backup Time"
-        def tentukan_kewajaran(row):
-            rh = row['Delta RH']
-            liter = row['Jumlah Liter']
-            rasio = row['Rasio (Ltr/Jam)']
-            
-            if rh == 0 and liter == 0:
-                return "🟢 Tidak Ada Backup Time"
-            elif rh == 0 and liter > 0:
-                return "❌ Tidak Wajar (BBM Terisi, Mesin Mati)"
-            elif rh > 0 and liter == 0:
-                return "⚠️ Atensi (Genset Jalan, BBM 0 Liter)"
-            elif rasio > 4.5:
-                return "🚨 Indikasi Boros / Over-consumption"
-            elif rasio < 1.0:
-                return "📉 Terlalu Irit / Potensi Salah Input"
-            else:
-                return "🟢 Wajar"
-
-        df_audit['Status Audit BBM'] = df_audit.apply(tentukan_kewajaran, axis=1)
-        
-        # Tampilkan matriks total kasus audit
-        status_counts = df_audit['Status Audit BBM'].value_counts()
+        # Tampilkan matriks angka total kasus audit di atas tabel audit
+        status_counts = df_filtered['Status Audit BBM'].value_counts()
         
         c_aud1, c_aud2, c_aud3 = st.columns(3)
         with c_aud1:
@@ -200,7 +232,7 @@ try:
             'Delta RH', 'Jumlah Liter', 'Rasio (Ltr/Jam)', 'Status Audit BBM'
         ]
         
-        df_audit_sorted = df_audit[kolom_audit_tampil].sort_values(by='Rasio (Ltr/Jam)', ascending=False)
+        df_audit_sorted = df_filtered[kolom_audit_tampil].sort_values(by='Rasio (Ltr/Jam)', ascending=False)
         st.dataframe(df_audit_sorted, use_container_width=True)
         
     else:
