@@ -1,48 +1,64 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import urllib.parse
 
-st.set_page_config(page_title="Dashboard MBP Professional", layout="wide")
-
-# Styling CSS untuk tampilan lebih bersih
-st.markdown("""
-    <style>
-    .metric-card { background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 5px solid #008080; }
-    </style>
-    """, unsafe_allow_html=True)
+st.set_page_config(page_title="Dashboard MBP", layout="wide")
 
 st.title("📊 MBP Quality Control Dashboard")
-st.markdown("---")
 
-# Data loading... (Logic sama dengan sebelumnya)
+# Konfigurasi Akses Data
 sheet_id = "1CrupWIBU3NP49ORN3AxC6ave7SD01ds_odu7NVBOIoI"
-@st.cache_data(ttl=300)
+
+@st.cache_data(ttl=60)
 def load_data(sheet_name):
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={urllib.parse.quote(sheet_name)}"
-    return pd.read_csv(url).dropna(how='all')
+    try:
+        # Membaca data
+        df = pd.read_csv(url)
+        # Membersihkan nama kolom
+        df.columns = df.columns.str.strip()
+        # Membuang baris yang kosong sama sekali
+        df = df.dropna(how='all')
+        return df
+    except Exception as e:
+        return None
 
-df = load_data("Sheet1")
+# Pilih Sheet
+selected_sheet = st.sidebar.selectbox("Pilih Tab:", ["Sheet1", "Pivot Table 1"])
+df = load_data(selected_sheet)
 
-# --- DASHBOARD UI BERJENJANG ---
+if df is not None:
+    st.sidebar.markdown("---")
+    cols = df.columns.tolist()
+    
+    # Pilih kolom untuk dihitung
+    rh_awal = st.sidebar.selectbox("Kolom RH Awal:", cols, index=0)
+    rh_akhir = st.sidebar.selectbox("Kolom RH Akhir:", cols, index=1)
 
-# 1. Row Ringkasan (KPI Cards)
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("Total Input", len(df))
-with col2:
-    st.metric("Rata-rata RH Awal", f"{df.iloc[:, 0].mean():.1f}")
-with col3:
-    st.metric("Rata-rata RH Akhir", f"{df.iloc[:, 1].mean():.1f}")
+    # --- PENGAMANAN DATA (FIX ERROR) ---
+    df_clean = df.copy()
+    
+    # Mengonversi ke angka secara paksa. Jika teks, maka jadi NaN (Not a Number)
+    df_clean['Val_Awal'] = pd.to_numeric(df_clean[rh_awal], errors='coerce')
+    df_clean['Val_Akhir'] = pd.to_numeric(df_clean[rh_akhir], errors='coerce')
+    
+    # Menghitung Delta hanya jika kedua kolom berisi angka
+    df_clean['Delta RH'] = df_clean['Val_Akhir'] - df_clean['Val_Awal']
+    
+    # Menampilkan hanya baris yang datanya valid (membuang baris Total/Teks)
+    df_display = df_clean.dropna(subset=['Val_Awal', 'Val_Akhir'])
 
-st.markdown("---")
+    # --- LAYOUT DASHBOARD ---
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        st.subheader("Ringkasan")
+        st.metric("Total Data Valid", len(df_display))
+        st.metric("Rata-rata Delta", f"{df_display['Delta RH'].mean():.2f}")
+    
+    with col2:
+        st.subheader("Data Detail")
+        st.dataframe(df_display[['Val_Awal', 'Val_Akhir', 'Delta RH']], use_container_width=True)
 
-# 2. Row Konten (Tabel vs Chart)
-tab_data, tab_grafik = st.tabs(["📋 Tabel Data Detail", "📈 Visualisasi Tren"])
-
-with tab_data:
-    st.dataframe(df, use_container_width=True, height=400)
-
-with tab_grafik:
-    fig = px.line(df, title="Tren Perubahan Nilai dari Waktu ke Waktu")
-    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.error("Gagal memuat data. Pastikan link Google Sheets Anda sudah diatur menjadi 'Anyone with the link' (Publik).")
